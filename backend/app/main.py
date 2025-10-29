@@ -4,11 +4,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import json
 import os
-import re
 
 app = FastAPI(title="React + FastAPI on OpenShift (BFF)")
 
-# Allow CORS internally if needed (not exposed to public in BFF mode)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,34 +15,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static files (built frontend). We expect files under ./static after image build
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
-    # Serve built app at root (index.html) and assets
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
+    # Serve built assets at /assets
+    app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
 
 
 def get_initial_state() -> dict:
-    # Here you can fetch any internal data, aggregate, etc.
-    # Example: pull message from internal services, databases, etc.
     return {
         "status": "ok",
         "message": "Hello from FastAPI (BFF) via internal Service!",
     }
-
-
-def inject_state_into_html(html: str, state: dict) -> str:
-    state_json = json.dumps(state)
-    script_tag = f"<script>window.__INITIAL_STATE__ = {state_json};</script>"
-    # Try known marker first
-    if "<!--INITIAL_STATE-->" in html:
-        return html.replace("<!--INITIAL_STATE-->", script_tag)
-    # Otherwise, try to inject before </head> or </body>
-    for closing_tag in ["</head>", "</body>"]:
-        if closing_tag in html:
-            return html.replace(closing_tag, script_tag + closing_tag)
-    # Fallback: append
-    return html + script_tag
 
 
 def load_index_html() -> str:
@@ -55,34 +36,35 @@ def load_index_html() -> str:
         return f.read()
 
 
+def inject_state(html: str, state: dict) -> str:
+    state_json = json.dumps(state)
+    script_tag = f"<script>window.__INITIAL_STATE__ = {state_json};</script>"
+    if "<!--INITIAL_STATE-->" in html:
+        return html.replace("<!--INITIAL_STATE-->", script_tag)
+    # inject before </head> or </body>
+    for tag in ("</head>", "</body>"):
+        if tag in html:
+            return html.replace(tag, script_tag + tag)
+    return html + script_tag
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root(_: Request) -> Response:
     html = load_index_html()
     if not html:
-        state = json.dumps(get_initial_state())
-        html = f"""
-        <!doctype html>
-        <html><head><meta charset='utf-8'><title>BFF</title></head>
-        <body>
-          <script>window.__INITIAL_STATE__ = {state};</script>
-          <div id='root'>Build missing. Initial state embedded.</div>
-        </body></html>
-        """
-        return HTMLResponse(content=html)
-    return HTMLResponse(content=inject_state_into_html(html, get_initial_state()))
+        return HTMLResponse("Build missing", status_code=503)
+    return HTMLResponse(inject_state(html, get_initial_state()))
 
 
-# SPA fallback to index for client-side routes
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa_fallback(full_path: str) -> Response:
-    # Serve index.html for any unmatched path; assets are served via /assets mount
+    # Serve index for client routes; real assets are under /assets
     html = load_index_html()
     if not html:
-        return HTMLResponse(content="Not built", status_code=404)
-    return HTMLResponse(content=inject_state_into_html(html, get_initial_state()))
+        return HTMLResponse("Not found", status_code=404)
+    return HTMLResponse(inject_state(html, get_initial_state()))
 
 
-# Optional API still available internally/external if needed
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
