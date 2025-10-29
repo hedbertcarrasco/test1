@@ -1,18 +1,21 @@
 # syntax=docker/dockerfile:1
 
-# Build frontend
-FROM node:20-alpine AS web-build
+# Build frontend using Red Hat UBI Node.js 20
+FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS web-build
 WORKDIR /app/frontend
+# Ensure devDependencies are installed (Vite)
+ENV NODE_ENV=development \
+    NPM_CONFIG_PRODUCTION=false
 COPY frontend/package.json frontend/package-lock.json* frontend/pnpm-lock.yaml* frontend/yarn.lock* ./
-RUN if [ -f package-lock.json ]; then npm ci; \
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev=false; \
     elif [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i --frozen-lockfile; \
     elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
     else npm i; fi
 COPY frontend/ .
 RUN npm run build
 
-# Backend runtime image
-FROM python:3.11-slim AS api
+# Backend runtime image using Red Hat UBI Python 3.11
+FROM registry.access.redhat.com/ubi9/python-311:latest AS api
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
