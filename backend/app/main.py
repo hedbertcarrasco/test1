@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import json
 import os
+import re
 
 app = FastAPI(title="React + FastAPI on OpenShift (BFF)")
 
@@ -19,7 +20,8 @@ app.add_middleware(
 # Static files (built frontend). We expect files under ./static after image build
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
-    app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
+    # Serve built app at root (index.html) and assets
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
 
 
 def get_initial_state() -> dict:
@@ -31,11 +33,32 @@ def get_initial_state() -> dict:
     }
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(_: Request) -> Response:
+def inject_state_into_html(html: str, state: dict) -> str:
+    state_json = json.dumps(state)
+    script_tag = f"<script>window.__INITIAL_STATE__ = {state_json};</script>"
+    # Try known marker first
+    if "<!--INITIAL_STATE-->" in html:
+        return html.replace("<!--INITIAL_STATE-->", script_tag)
+    # Otherwise, try to inject before </head> or </body>
+    for closing_tag in ["</head>", "</body>"]:
+        if closing_tag in html:
+            return html.replace(closing_tag, script_tag + closing_tag)
+    # Fallback: append
+    return html + script_tag
+
+
+def load_index_html() -> str:
     index_path = os.path.join(static_dir, "index.html")
     if not os.path.exists(index_path):
-        # Fallback minimal page if static build is missing
+        return ""
+    with open(index_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root(_: Request) -> Response:
+    html = load_index_html()
+    if not html:
         state = json.dumps(get_initial_state())
         html = f"""
         <!doctype html>
@@ -46,14 +69,17 @@ async def index(_: Request) -> Response:
         </body></html>
         """
         return HTMLResponse(content=html)
+    return HTMLResponse(content=inject_state_into_html(html, get_initial_state()))
 
-    with open(index_path, "r", encoding="utf-8") as f:
-        html = f.read()
 
-    state_json = json.dumps(get_initial_state())
-    injection = f"<script>window.__INITIAL_STATE__ = {state_json};</script>"
-    html = html.replace("<!--INITIAL_STATE-->", injection)
-    return HTMLResponse(content=html)
+# SPA fallback to index for client-side routes
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+async def spa_fallback(full_path: str) -> Response:
+    # Serve index.html for any unmatched path; assets are served via /assets mount
+    html = load_index_html()
+    if not html:
+        return HTMLResponse(content="Not built", status_code=404)
+    return HTMLResponse(content=inject_state_into_html(html, get_initial_state()))
 
 
 # Optional API still available internally/external if needed
