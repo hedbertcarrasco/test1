@@ -20,18 +20,19 @@ FROM registry.access.redhat.com/ubi9/python-311:latest AS api
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
-WORKDIR /app
+# Use writable app-root workdir
+WORKDIR /opt/app-root/src
 
 # Install backend deps
-COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY backend/requirements.txt /opt/app-root/src/requirements.txt
+RUN pip install --no-cache-dir -r /opt/app-root/src/requirements.txt
 
 # Copy backend app
-COPY backend/app /app/app
+COPY backend/app /opt/app-root/src/app
 
 # Copy built frontend to app static directory
-RUN mkdir -p /app/app/static
-COPY --from=web-build /opt/app-root/src/dist/ /app/app/static/
+RUN mkdir -p /opt/app-root/src/app/static
+COPY --from=web-build /opt/app-root/src/dist/ /opt/app-root/src/app/static/
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
