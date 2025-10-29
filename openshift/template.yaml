@@ -1,9 +1,9 @@
 apiVersion: template.openshift.io/v1
 kind: Template
 metadata:
-  name: react-fastapi-openshift
+  name: react-fastapi-bff
   annotations:
-    description: "React + FastAPI app with Docker builds and deployments on OpenShift"
+    description: "React (built) + FastAPI BFF served from one container on OpenShift"
 parameters:
   - name: NAME
     description: Base name for resources
@@ -17,40 +17,20 @@ parameters:
   - name: GIT_REF
     description: Git reference (branch/tag)
     value: main
-  - name: API_CONTEXT_DIR
-    description: Subdirectory for the backend
-    value: backend
-  - name: WEB_CONTEXT_DIR
-    description: Subdirectory for the frontend
-    value: frontend
-  - name: WEB_ROUTE_HOST
-    description: Optional host for the web Route (leave empty to let OpenShift generate)
-    value: ""
-  - name: API_ROUTE_HOST
-    description: Optional host for the API Route (leave empty to let OpenShift generate)
-    value: ""
-  - name: VITE_API_URL
-    description: API URL injected at frontend build time (e.g., https://api.example.com)
-    value: ""
 
 objects:
-  # ImageStreams
+  # ImageStream
   - apiVersion: image.openshift.io/v1
     kind: ImageStream
     metadata:
-      name: ${NAME}-backend
-      namespace: ${NAMESPACE}
-  - apiVersion: image.openshift.io/v1
-    kind: ImageStream
-    metadata:
-      name: ${NAME}-frontend
+      name: ${NAME}
       namespace: ${NAMESPACE}
 
-  # BuildConfigs (Docker strategy)
+  # BuildConfig (Docker strategy) building from repo root (Dockerfile at root)
   - apiVersion: build.openshift.io/v1
     kind: BuildConfig
     metadata:
-      name: ${NAME}-backend
+      name: ${NAME}
       namespace: ${NAMESPACE}
     spec:
       source:
@@ -58,69 +38,45 @@ objects:
         git:
           uri: ${GIT_URI}
           ref: ${GIT_REF}
-        contextDir: ${API_CONTEXT_DIR}
+        contextDir: .
       strategy:
         type: Docker
         dockerStrategy: {}
       output:
         to:
           kind: ImageStreamTag
-          name: ${NAME}-backend:latest
+          name: ${NAME}:latest
       triggers:
         - type: GitHub
-          github: {secret: "dummy"}
+          github:
+            secret: "dummy"
         - type: Generic
-          generic: {secret: "dummy"}
-        - type: ConfigChange
-        - type: ImageChange
-  - apiVersion: build.openshift.io/v1
-    kind: BuildConfig
-    metadata:
-      name: ${NAME}-frontend
-      namespace: ${NAMESPACE}
-    spec:
-      source:
-        type: Git
-        git:
-          uri: ${GIT_URI}
-          ref: ${GIT_REF}
-        contextDir: ${WEB_CONTEXT_DIR}
-      strategy:
-        type: Docker
-        dockerStrategy:
-          buildArgs:
-            - name: VITE_API_URL
-              value: ${VITE_API_URL}
-      output:
-        to:
-          kind: ImageStreamTag
-          name: ${NAME}-frontend:latest
-      triggers:
-        - type: GitHub
-          github: {secret: "dummy"}
-        - type: Generic
-          generic: {secret: "dummy"}
+          generic:
+            secret: "dummy"
         - type: ConfigChange
         - type: ImageChange
 
-  # Backend Deployment, Service, Route
+  # Deployment, Service, Route (single app)
   - apiVersion: apps/v1
     kind: Deployment
     metadata:
-      name: ${NAME}-backend
+      name: ${NAME}
       namespace: ${NAMESPACE}
-      labels: { app: ${NAME}, tier: backend }
+      labels:
+        app: ${NAME}
     spec:
       replicas: 1
       selector:
-        matchLabels: { app: ${NAME}, tier: backend }
+        matchLabels:
+          app: ${NAME}
       template:
         metadata:
-          labels: { app: ${NAME}, tier: backend }
+          labels:
+            app: ${NAME}
         spec:
           containers:
-            - name: backend
-              image: image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${NAME}-backend:latest
+            - name: bff
+              image: image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${NAME}:latest
               imagePullPolicy: IfNotPresent
               ports:
                 - containerPort: 8000
@@ -140,11 +96,13 @@ objects:
   - apiVersion: v1
     kind: Service
     metadata:
-      name: ${NAME}-backend
+      name: ${NAME}
       namespace: ${NAMESPACE}
-      labels: { app: ${NAME}, tier: backend }
+      labels:
+        app: ${NAME}
     spec:
-      selector: { app: ${NAME}, tier: backend }
+      selector:
+        app: ${NAME}
       ports:
         - name: http
           port: 8000
@@ -152,62 +110,12 @@ objects:
   - apiVersion: route.openshift.io/v1
     kind: Route
     metadata:
-      name: ${NAME}-backend
+      name: ${NAME}
       namespace: ${NAMESPACE}
     spec:
-      host: ${API_ROUTE_HOST}
       to:
         kind: Service
-        name: ${NAME}-backend
-      port:
-        targetPort: http
-      tls:
-        termination: edge
-
-  # Frontend Deployment, Service, Route
-  - apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: ${NAME}-frontend
-      namespace: ${NAMESPACE}
-      labels: { app: ${NAME}, tier: frontend }
-    spec:
-      replicas: 1
-      selector:
-        matchLabels: { app: ${NAME}, tier: frontend }
-      template:
-        metadata:
-          labels: { app: ${NAME}, tier: frontend }
-        spec:
-          containers:
-            - name: frontend
-              image: image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${NAME}-frontend:latest
-              imagePullPolicy: IfNotPresent
-              ports:
-                - containerPort: 8080
-                  name: http
-  - apiVersion: v1
-    kind: Service
-    metadata:
-      name: ${NAME}-frontend
-      namespace: ${NAMESPACE}
-      labels: { app: ${NAME}, tier: frontend }
-    spec:
-      selector: { app: ${NAME}, tier: frontend }
-      ports:
-        - name: http
-          port: 8080
-          targetPort: 8080
-  - apiVersion: route.openshift.io/v1
-    kind: Route
-    metadata:
-      name: ${NAME}-frontend
-      namespace: ${NAMESPACE}
-    spec:
-      host: ${WEB_ROUTE_HOST}
-      to:
-        kind: Service
-        name: ${NAME}-frontend
+        name: ${NAME}
       port:
         targetPort: http
       tls:

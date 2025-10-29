@@ -15,6 +15,8 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
+# Use custom nginx config to proxy /api to the backend Service
+COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 8080
+EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

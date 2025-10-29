@@ -1,96 +1,73 @@
-# React + FastAPI on OpenShift
+# React + FastAPI on OpenShift (BFF)
 
-This is a minimal example showing a React frontend (Vite) and a FastAPI backend, containerized and ready for OpenShift.
+FastAPI sirve el build de React y embebe el estado inicial: el navegador nunca llama al backend directamente; todas las llamadas internas ocurren dentro del clúster.
 
 ## Local development
 
-Backend:
+Backend (incluye servir el build, si existe):
 
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# Inicia FastAPI
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Frontend:
+Frontend (para construir assets):
 
 ```bash
 cd frontend
 npm install
-# Optionally point to a different API (defaults to http://localhost:8000)
-# export VITE_API_URL=http://localhost:8000
-npm run dev
+npm run build
+# Esto genera dist/; al construir la imagen se copiará a backend/app/static
 ```
 
-Open http://localhost:5173 and you should see the page, with the API message from FastAPI.
+Abre http://localhost:8000 para ver la app (si ya copiaste dist a backend/app/static).
 
-## Container builds (optional local)
+## Imagen única (Docker)
 
-Backend:
+Construye desde la raíz (Dockerfile unificado):
 
 ```bash
-cd backend
-docker build -t demo/backend:latest .
+docker build -t demo/react-fastapi-bff:latest .
 ```
 
-Frontend (optionally set API URL at build time):
+## OpenShift (un solo BuildConfig/Deployment)
+
+- Plantilla: `openshift/template.yaml` crea un BuildConfig desde la raíz del repo, una ImageStream, un Deployment, un Service y un Route.
+
+Procesa y aplica:
 
 ```bash
-cd frontend
-# Example using a public route to backend
-# docker build --build-arg VITE_API_URL=https://your-backend-route/ -t demo/frontend:latest .
-docker build -t demo/frontend:latest .
-```
-
-## Deploy to OpenShift (template)
-
-The repo includes an OpenShift Template at `openshift/template.yaml` that defines:
-- ImageStreams and Docker BuildConfigs for backend and frontend (building from this Git repo)
-- Deployments, Services, and Routes for both components
-
-You will need:
-- An OpenShift project selected (e.g., `oc project my-project`)
-- This repository accessible by the OpenShift cluster (public or reachable via webhook/credentials)
-
-Process and apply the template:
-
-```bash
-# Required: set your Git repository URL
-GIT_URI="https://github.com/your-org/your-repo.git"
-# Optional: branch/ref
-git_ref="main"
-# Optional: Inject API URL into frontend build (otherwise the app will try same host:8000)
-# For example, after the backend route is created, you can re-build with that host
-vite_api_url=""
-
 oc process -f openshift/template.yaml \
   -p NAME=react-fastapi \
   -p NAMESPACE=$(oc project -q) \
-  -p GIT_URI="$GIT_URI" \
-  -p GIT_REF="$git_ref" \
-  -p VITE_API_URL="$vite_api_url" \
+  -p GIT_URI="https://github.com/hedbertcarrasco/test1.git" \
+  -p GIT_REF="main" \
 | oc apply -f -
 ```
 
-Start the builds (if not auto-triggered):
+Lanza el build y espera:
 
 ```bash
-oc start-build react-fastapi-backend --wait
-oc start-build react-fastapi-frontend --wait
+oc start-build react-fastapi --wait --follow
 ```
 
-Once images are built, OpenShift will deploy them. Get the routes:
+Reinicia el despliegue si ya existía:
 
 ```bash
-oc get routes
+oc rollout restart deploy/react-fastapi
+oc rollout status deploy/react-fastapi
 ```
 
-- The backend exposes `/api/health` and `/api/message`.
-- The frontend is a static site served on port 8080.
+Obtén la URL pública:
 
-### Common adjustments
-- CORS: The backend currently allows `*` for simplicity; in production, restrict origins.
-- Frontend API URL: Provide `VITE_API_URL` at build time to point to your backend route, e.g., `https://react-fastapi-backend-<ns>.<cluster-domain>`.
-- Scaling: Update replicas in the Deployments as needed.
-# test1
+```bash
+oc get route react-fastapi -o jsonpath='{.spec.host}{"\n"}'
+```
+
+### Notas
+- Arquitectura BFF: el HTML incluye `window.__INITIAL_STATE__` generado en el servidor; React no hace fetch en el cliente.
+- Backend interno: cualquier integración adicional se realiza desde FastAPI hacia Services internos.
+- Seguridad: no necesitas exponer el backend por separado; el Route público apunta solo al BFF (FastAPI).
