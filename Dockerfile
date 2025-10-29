@@ -30,8 +30,7 @@ RUN pip install --no-cache-dir -r /opt/app-root/src/requirements.txt
 # Copy backend app
 COPY backend/app /opt/app-root/src/app
 
-# Copy built frontend to app static directory
-RUN mkdir -p /opt/app-root/src/app/static
+# Copy built frontend to app static directory (COPY creates path if missing)
 COPY --from=web-build /opt/app-root/src/dist/ /opt/app-root/src/app/static/
 
 EXPOSE 8000
